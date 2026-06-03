@@ -1,0 +1,46 @@
+Snowcrash -
+
+	level00
+	Commande pour voir les users de la machine : cut -d: -f1 /etc/passwd
+	Commande pour afficher les fichers partager et autoriser avec un autre user : find / -user &user 2>/dev/null
+	-> Commande pour faire les deux : for user in $(cut -d: -f1 /etc/passwd); do
+    																	echo "=== Fichiers de $user ==="
+    																	find / -user "$user" 2>/dev/null
+    																	echo ""
+																		done
+	Mot de passe chiffrer en code ceasar dans le fichier john.
+	flag : x24ti5gi3x0ol2eh4esiuxias
+
+	level01
+	Checker le fichier /etc/passwd -> flag01:42hDRfypTqqnw:3001:3001::/home/flag/flag01:/bin/bash
+	hash-identifier 42hDRfypTqqnw sur kali pour trouver qu'il sagit du hash DES
+	decripter avec john ->
+		sudo apt install john
+		echo "flag01:42hDRfypTqqnw" > /tmp/hash.txt
+		john --format=descrypt /tmp/hash.tx (crack)
+	flag : f2av5il02puano7naaf6adaaf
+
+	level02
+	ls dans le repos.
+	ficher .pcap ouvrable avec wireshark.
+	scp -P 4242 level02<ip_vm>:<path_fichier_a_copier> <dest>	
+	utilisation de wireshark -> visibiliter des blocks data -> possibiliter de les voirs a la chaine -> right click -> follow stream
+	ft_wandr...NDRel.L0L (dot = backspace)
+	ft_waNDReL0L
+	flag : kooda2puivaav1idi4f57q8iq
+
+	level03
+	ls dans le repos.
+	Fichier executable avec en permission owner -> s
+	on dis SUID un fichier qui s'execute avec les permission du proprietaire, et non celle de l'utilisateur.
+	le fichier appartient a flag03, l'idee donc serai de reusir a faire que ./level03 execute "getflag".
+	Je ne peux pas modifier ./level03
+	avec strings ./level03 je peux voir que le fichier fait un appel de echo pour m'afficher son message.
+	echo utilise env pour etre appeler.
+	il parcours les chemins de PATH de l'env pour trouver "echo".
+	Sufit donc de modifier PATH et de faire appel a un "echo" falicifier avant le vrai echo.
+	et faire un appel simple a getflag
+	flag : qi0maab88jeaj46qoumi7maus
+
+	level04
+	
