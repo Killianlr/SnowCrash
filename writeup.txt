@@ -1,0 +1,114 @@
+Snowcrash -
+
+	level00
+	Commande pour voir les users de la machine : cut -d: -f1 /etc/passwd
+	Commande pour afficher les fichers partager et autoriser avec un autre user : find / -user &user 2>/dev/null
+	-> Commande pour faire les deux : for user in $(cut -d: -f1 /etc/passwd); do
+    																	echo "=== Fichiers de $user ==="
+    																	find / -user "$user" 2>/dev/null
+    																	echo ""
+																		done
+	Mot de passe chiffrer en code ceasar dans le fichier john.
+	flag : x24ti5gi3x0ol2eh4esiuxias
+
+	level01
+	Checker le fichier /etc/passwd -> flag01:42hDRfypTqqnw:3001:3001::/home/flag/flag01:/bin/bash
+	hash-identifier 42hDRfypTqqnw sur kali pour trouver qu'il sagit du hash DES
+	decripter avec john ->
+		sudo apt install john
+		echo "flag01:42hDRfypTqqnw" > /tmp/hash.txt
+		john --format=descrypt /tmp/hash.tx (crack)
+	flag : f2av5il02puano7naaf6adaaf
+
+	level02
+	ls dans le repos.
+	ficher .pcap ouvrable avec wireshark.
+	scp -P 4242 level02<ip_vm>:<path_fichier_a_copier> <dest>	
+	utilisation de wireshark -> visibiliter des blocks data -> possibiliter de les voirs a la chaine -> right click -> follow stream
+	ft_wandr...NDRel.L0L (dot = backspace)
+	ft_waNDReL0L
+	flag : kooda2puivaav1idi4f57q8iq
+
+	level03
+	ls dans le repos.
+	Fichier executable avec en permission owner -> s
+	on dis SUID un fichier qui s'execute avec les permission du proprietaire, et non celle de l'utilisateur.
+	le fichier appartient a flag03, l'idee donc serai de reusir a faire que ./level03 execute "getflag".
+	Je ne peux pas modifier ./level03
+	avec strings ./level03 je peux voir que le fichier fait un appel de echo pour m'afficher son message.
+	echo utilise env pour etre appeler.
+	il parcours les chemins de PATH de l'env pour trouver "echo".
+	Sufit donc de modifier PATH et de faire appel a un "echo" falicifier avant le vrai echo.
+	et faire un appel simple a getflag
+	flag : qi0maab88jeaj46qoumi7maus
+
+	level04
+	ls -l && find / -user flag04 2>/dev/null dans le repo.
+	fichier exec SUID
+	Script PERL sur un server web (localhost:4747)
+	cat le fichier, c'est un script qui echo l'argument de x
+	pas de protection donc on peux faire un injection de commande.
+	curl http://localhost:4747?x=&(CommandeAInjecter)
+	il faut reussir a faire passer la commande getflag
+	-> curl "http://localhost:4747?x=\`getflag\`"
+		-> `` dis au shell d'executer la commande et d'envoyer le resultat
+		-> \\ dis au shell local de pas interpreter les ``
+		--> CAD lors du curl, sans les \, le curl envoyer serai le resultat de getflag, or, on veux que le script affiche le resultat de getflat coter server.
+	flag : ne2searoevaevoem4ov4ar8ap
+
+	level05
+	ls -l && find / -user flag05 2>/dev/null dans le repo.
+	fichier openarenaserver qui appartient a flag05, je peux seulement le lire avec cat.
+	L'utiliter du script nous ammene a penser a une tache automatique, repeter.
+	On essaie d'en savoir plus avec Cron, mais rien n'est accessible, je peux pas regarder le fichier de configuration crontab de flag05.
+	On comprends que le script execute et supprime tout les executable du dossier /opt/openarenaserver/
+	alors on creer un executable dans ce dossier car on a les droits de le faire, et on espere qu'il s'execute.
+	echo "getflag > /tmp/flag" > /opt/openarenaserver/exploit.sh
+	au bout de quelques minutes on recupere le flag
+	flag : viuaaale9huek52boumoomioc
+
+	level06
+	flag : wiok45aaoguiboiki2tuin6ub
+
+	level07
+	ls -l && find / -user flag07 2>/dev/null dans le repo.
+	Binaire SUID ./level07
+	Strings level07 pour en apprendre d'avantage sur le binaire
+	./level07 = level07
+	On trouve dans le binaire les fonctions getenv, asprintf, system...
+	on vois aussi la variable env LOGNAME qui corresponds a "level07"
+	on test de changer LOGNAME=test
+	./level07 -> test
+	On comprends que le binaire fait un appel system avec echo pour afficher la variable LOGNAME avec getenv.
+	On manipule la variable LOGNAME pour trouver le flag, ici on veux faire appel a getflag car on possede les droits de flag07 grace a SUID
+	Suffit de modifier LOGNAME en ";getflag" ou "| getflag" ou "&& getflag"
+	flag : fiumuikeil55xe9cu4dood66h
+
+	level08
+	ls -l && find / -user flag08 2>/dev/null dans le repo.
+	Binaire SUID ./level08
+	Strings level08 pour en apprendre d'avantage sur le binaire
+	./level08 pour comprends ce qu'il attends.
+	Il s'agit d'ouvrir un fichier et d'affichier son comptenu.
+	je ne peux pas ouvrir token (le fichier ou se trouve le flag)
+	J'essaie d'ouvrir un fichier test dans /tmp/ -> ca marche !
+	avec strings on vois que le binaire utilise strstr, et que "token" est coder en dure dans le code.
+	On peux alors deduire que le nom du fichier passer en argument est tester avec strstr (token) pour enpecher l'ouverture du fichier sensible.
+	mais, on peux creer des liens symboliques entre des fichier.
+	Je creer donc un liens symbolique entre le fichier token et n'importe quel nom de fichier qui ne contiens pas la chaine "token"
+	ln -s </home/user..../token> /tmp/test
+	je peux simplement ./level08 /tmp/test pour lire le comptenu de token
+	flag : 25749xKZ8L7DkSCwJkT9dyv6f
+
+	level09  
+	ls -l && find / -user flag09 2>/dev/null dans le repo.
+	Binaire SUID ./level09
+	Strings level09 pour en apprendre d'avantage sur le binaire
+	./level09 pour comprends ce qu'il attends.
+	quelques tests d'entrer et je comprends rapidemement le fonctionnement du programme.
+	En entree -> aaaaaaaa
+	en sortie -> abcdefgh
+	le programme incremente la valeur par sa position.
+	on comprends que le fichier token est le flag crypter par le programme.
+	suffit de faire un petit code qui soustrait chaque character par sa position, et hop on chope le flag.
+	flag : s5cAJpM8ev6XHw998pRWG728z
