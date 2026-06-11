@@ -112,3 +112,20 @@ Snowcrash -
 	on comprends que le fichier token est le flag crypter par le programme.
 	suffit de faire un petit code qui soustrait chaque character par sa position, et hop on chope le flag.
 	flag : s5cAJpM8ev6XHw998pRWG728z
+
+	level10
+	ls -l && find / -user flag09 2>/dev/null dans le repo.
+	Binaire SUID ./level09
+	Strings level09 pour en apprendre d'avantage sur le binaire
+	./level09 pour comprends ce qu'il attends.
+	un fichier en premier arguments, et une adresse d'ecoute en second.
+	flag : feulo4b72j7edeahuete3no7c
+
+	level11
+	flag : fa6v5ateaw21peobuub8ipe6s
+
+	level12
+	flag : g1qKMiRpXf53AWhDaU7FEkczr
+
+	level13
+	flag : 2A31L79asukciNyi8uppkEuSx

